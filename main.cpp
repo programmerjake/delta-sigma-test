@@ -2,9 +2,8 @@
 #include <cassert>
 #include <iostream>
 #include <string>
-#include <cstdint>
+#include <stdint.h>
 #include <cmath>
-#include <chrono>
 #include <termios.h>
 #include <cstdio>
 #include <unistd.h>
@@ -31,12 +30,17 @@ inline float limit(float v, float minimum, float maximum)
     return v > maximum ? maximum : v < minimum ? minimum : v;
 }
 
-struct SigmaDeltaModulator
+class SigmaDeltaModulator
 {
-    float sum1 = 0, sum2 = 0;
-    static constexpr float factor1 = 0.5f, factor2 = 0.5f;
+    float sum1, sum2;
+public:
+    SigmaDeltaModulator()
+        : sum1(0), sum2(0)
+    {
+    }
     bool forcedStep(float input, bool retval)
     {
+        const float factor1 = 0.5f, factor2 = 0.5f;
         input = limit(input, -1, 1);
         float feedback = retval ? 1 : -1;
         sum1 += (input - feedback) * factor1;
@@ -49,11 +53,12 @@ struct SigmaDeltaModulator
     }
 };
 
-struct SerialOutput
+class SerialOutput
 {
     FILE *f;
-    SerialOutput(const SerialOutput &) = delete;
-    void operator =(const SerialOutput &) = delete;
+    SerialOutput(const SerialOutput &); // not implemented
+    void operator =(const SerialOutput &); // not implemented
+public:
     SerialOutput(string devicePath)
     {
         signal(SIGIO, SIG_IGN);
@@ -69,7 +74,7 @@ struct SerialOutput
         if(0 != tcsetattr(fd, TCSANOW, &settings))
             error("can't get settings : " + devicePath);
         f = fdopen(fd, "wb");
-        if(f == nullptr)
+        if(!f)
             error("can't run fdopen");
     }
     void write(uint8_t v)
@@ -82,17 +87,20 @@ struct SerialOutput
     }
 };
 
-struct SignalSourceFile
+class SignalSourceFile
 {
     double sampleRate;
     int bytesPerSample;
     ifstream f;
     float lastSample, currentSample;
+public:
     bool done;
+private:
     float fractSample;
     bool isSigned;
-    SignalSourceFile(const SignalSourceFile &) = delete;
-    void operator =(const SignalSourceFile &) = delete;
+    SignalSourceFile(const SignalSourceFile &); // not implemented
+    void operator =(const SignalSourceFile &); // not implemented
+public:
     SignalSourceFile(string fileName, double sampleRate, int bytesPerSample, bool isSigned)
         : sampleRate(sampleRate), bytesPerSample(bytesPerSample), done(false), fractSample(0), isSigned(isSigned)
     {
@@ -151,12 +159,14 @@ struct SignalSourceFile
     }
 };
 
-struct SignalSourceSine
+class SignalSourceSine
 {
     float angle;
     float frequency, amplitude;
+public:
+    bool done;
     SignalSourceSine(float frequency, float amplitude)
-        : angle(0), frequency(frequency), amplitude(amplitude)
+        : angle(0), frequency(frequency), amplitude(amplitude), done(false)
     {
     }
     float operator ()(float deltaTime)
@@ -165,7 +175,6 @@ struct SignalSourceSine
         angle = fmod(angle, 2 * M_PI);
         return amplitude * sin(angle);
     }
-    bool done = false;
 };
 #if 1
 int main()

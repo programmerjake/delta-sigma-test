@@ -32,10 +32,8 @@
 			<Add option="-Wall" />
 			<Add option="-std=c++11" />
 			<Add option="-fexceptions" />
-			<Add option="`sdl2-config --cflags`" />
 		</Compiler>
 		<Linker>
-			<Add option="`sdl2-config --libs`" />
 		</Linker>
 		<Unit filename="main.cpp" />
 		<Extensions>
