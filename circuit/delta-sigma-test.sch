@@ -1,0 +1,196 @@
+EESchema Schematic File Version 2
+LIBS:power
+LIBS:device
+LIBS:transistors
+LIBS:conn
+LIBS:linear
+LIBS:regul
+LIBS:74xx
+LIBS:cmos4000
+LIBS:adc-dac
+LIBS:memory
+LIBS:xilinx
+LIBS:special
+LIBS:microcontrollers
+LIBS:dsp
+LIBS:microchip
+LIBS:analog_switches
+LIBS:motorola
+LIBS:texas
+LIBS:intel
+LIBS:audio
+LIBS:interface
+LIBS:digital-audio
+LIBS:philips
+LIBS:display
+LIBS:cypress
+LIBS:siliconi
+LIBS:opto
+LIBS:atmel
+LIBS:contrib
+LIBS:valves
+EELAYER 25 0
+EELAYER END
+$Descr A4 11693 8268
+encoding utf-8
+Sheet 1 1
+Title ""
+Date ""
+Rev ""
+Comp ""
+Comment1 ""
+Comment2 ""
+Comment3 ""
+Comment4 ""
+$EndDescr
+$Comp
+L SPEAKER SP1
+U 1 1 5472F6D3
+P 7100 3000
+F 0 "SP1" H 7000 3250 70  0000 C CNN
+F 1 "8Ω" H 7000 2750 70  0000 C CNN
+F 2 "" H 7100 3000 60  0000 C CNN
+F 3 "" H 7100 3000 60  0000 C CNN
+	1    7100 3000
+	1    0    0    -1  
+$EndComp
+$Comp
+L NPN Q1
+U 1 1 5472F824
+P 5200 2600
+F 0 "Q1" H 5200 2450 50  0000 R CNN
+F 1 "2N3904" H 5200 2750 50  0000 R CNN
+F 2 "" H 5200 2600 60  0000 C CNN
+F 3 "" H 5200 2600 60  0000 C CNN
+	1    5200 2600
+	1    0    0    -1  
+$EndComp
+$Comp
+L PNP Q2
+U 1 1 5472F901
+P 5200 3200
+F 0 "Q2" H 5200 3050 60  0000 R CNN
+F 1 "2N3906" H 5200 3350 60  0000 R CNN
+F 2 "" H 5200 3200 60  0000 C CNN
+F 3 "" H 5200 3200 60  0000 C CNN
+	1    5200 3200
+	1    0    0    1   
+$EndComp
+Wire Wire Line
+	5300 3000 5300 2800
+$Comp
+L GND #PWR2
+U 1 1 5472FA5F
+P 5300 3700
+F 0 "#PWR2" H 5300 3700 30  0001 C CNN
+F 1 "GND" H 5300 3630 30  0001 C CNN
+F 2 "" H 5300 3700 60  0000 C CNN
+F 3 "" H 5300 3700 60  0000 C CNN
+	1    5300 3700
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	5300 3700 5300 3400
+Wire Wire Line
+	5000 2600 5000 3200
+$Comp
+L GND #PWR4
+U 1 1 5472FA9A
+P 6800 3400
+F 0 "#PWR4" H 6800 3400 30  0001 C CNN
+F 1 "GND" H 6800 3330 30  0001 C CNN
+F 2 "" H 6800 3400 60  0000 C CNN
+F 3 "" H 6800 3400 60  0000 C CNN
+	1    6800 3400
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	6800 3100 6800 3400
+$Comp
+L R R2
+U 1 1 5472FAAF
+P 5700 2900
+F 0 "R2" V 5780 2900 40  0000 C CNN
+F 1 "10Ω 1/2W" V 5600 2900 40  0000 C CNN
+F 2 "" V 5630 2900 30  0000 C CNN
+F 3 "" H 5700 2900 30  0000 C CNN
+	1    5700 2900
+	0    1    1    0   
+$EndComp
+Wire Wire Line
+	5300 2900 5450 2900
+Connection ~ 5300 2900
+$Comp
+L C C1
+U 1 1 5472FB26
+P 6100 3300
+F 0 "C1" H 6100 3400 40  0000 L CNN
+F 1 "47μF" H 6106 3215 40  0000 L CNN
+F 2 "" H 6138 3150 30  0000 C CNN
+F 3 "" H 6100 3300 60  0000 C CNN
+	1    6100 3300
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	5950 2900 6250 2900
+Wire Wire Line
+	6100 2900 6100 3100
+Connection ~ 6100 2900
+Wire Wire Line
+	6650 2900 6800 2900
+$Comp
+L GND #PWR3
+U 1 1 5472FBFB
+P 6100 3650
+F 0 "#PWR3" H 6100 3650 30  0001 C CNN
+F 1 "GND" H 6100 3580 30  0001 C CNN
+F 2 "" H 6100 3650 60  0000 C CNN
+F 3 "" H 6100 3650 60  0000 C CNN
+	1    6100 3650
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	6100 3500 6100 3650
+$Comp
+L C C2
+U 1 1 5472FC34
+P 6450 2900
+F 0 "C2" H 6450 3000 40  0000 L CNN
+F 1 "1000μF" H 6456 2815 40  0000 L CNN
+F 2 "" H 6488 2750 30  0000 C CNN
+F 3 "" H 6450 2900 60  0000 C CNN
+	1    6450 2900
+	0    1    1    0   
+$EndComp
+$Comp
+L +5V #PWR1
+U 1 1 5472FC6F
+P 5300 2100
+F 0 "#PWR1" H 5300 2190 20  0001 C CNN
+F 1 "+5V" H 5300 2190 30  0000 C CNN
+F 2 "" H 5300 2100 60  0000 C CNN
+F 3 "" H 5300 2100 60  0000 C CNN
+	1    5300 2100
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	5300 2100 5300 2400
+Text GLabel 4300 2900 0    60   Input ~ 0
+5V_Serial_In
+Connection ~ 5000 2900
+$Comp
+L R R1
+U 1 1 5472FD31
+P 4650 2900
+F 0 "R1" V 4730 2900 40  0000 C CNN
+F 1 "150Ω" V 4550 2900 40  0000 C CNN
+F 2 "" V 4580 2900 30  0000 C CNN
+F 3 "" H 4650 2900 30  0000 C CNN
+	1    4650 2900
+	0    1    1    0   
+$EndComp
+Wire Wire Line
+	4300 2900 4400 2900
+Wire Wire Line
+	4900 2900 5000 2900
+$EndSCHEMATC
