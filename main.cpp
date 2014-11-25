@@ -14,8 +14,13 @@
 #include <cerrno>
 #include <fstream>
 
+#if 1
+#define BAUD_RATE 460800
+#define BAUD_RATE_B B460800
+#else
 #define BAUD_RATE 921600
 #define BAUD_RATE_B B921600
+#endif
 
 using namespace std;
 
