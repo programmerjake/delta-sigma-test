@@ -13,14 +13,8 @@
 #include <signal.h>
 #include <cerrno>
 #include <fstream>
-
-#if 1
-#define BAUD_RATE 460800
-#define BAUD_RATE_B B460800
-#else
-#define BAUD_RATE 921600
-#define BAUD_RATE_B B921600
-#endif
+#include <vector>
+#include <ctime>
 
 using namespace std;
 
@@ -61,10 +55,81 @@ public:
 class SerialOutput
 {
     FILE *f;
+    float actualBaudRate;
     SerialOutput(const SerialOutput &); // not implemented
     void operator =(const SerialOutput &); // not implemented
+    static speed_t getBaudRateConstant(int baudRate)
+    {
+        switch(baudRate)
+        {
+#define BAUD_RATE(v) case v: return B ## v
+        BAUD_RATE(50);
+        BAUD_RATE(75);
+        BAUD_RATE(110);
+        BAUD_RATE(134);
+        BAUD_RATE(150);
+        BAUD_RATE(200);
+        BAUD_RATE(300);
+        BAUD_RATE(600);
+        BAUD_RATE(1200);
+        BAUD_RATE(1800);
+        BAUD_RATE(2400);
+        BAUD_RATE(4800);
+        BAUD_RATE(9600);
+        BAUD_RATE(19200);
+        BAUD_RATE(38400);
+#ifdef B57600
+        BAUD_RATE(57600);
+#endif
+#ifdef B115200
+        BAUD_RATE(115200);
+#endif
+#ifdef B230400
+        BAUD_RATE(230400);
+#endif
+#ifdef B460800
+        BAUD_RATE(460800);
+#endif
+#ifdef B500000
+        BAUD_RATE(500000);
+#endif
+#ifdef B576000
+        BAUD_RATE(576000);
+#endif
+#ifdef B921600
+        BAUD_RATE(921600);
+#endif
+#ifdef B1000000
+        BAUD_RATE(1000000);
+#endif
+#ifdef B1152000
+        BAUD_RATE(1152000);
+#endif
+#ifdef B1500000
+        BAUD_RATE(1500000);
+#endif
+#ifdef B2000000
+        BAUD_RATE(2000000);
+#endif
+#ifdef B2500000
+        BAUD_RATE(2500000);
+#endif
+#ifdef B3000000
+        BAUD_RATE(3000000);
+#endif
+#ifdef B3500000
+        BAUD_RATE(3500000);
+#endif
+#ifdef B4000000
+        BAUD_RATE(4000000);
+#endif
+#undef BAUD_RATE
+        default:
+            return B0;
+        }
+    }
 public:
-    SerialOutput(string devicePath)
+    SerialOutput(string devicePath, int baudRate)
     {
         signal(SIGIO, SIG_IGN);
         int fd = open(devicePath.c_str(), O_NOCTTY | O_WRONLY);
@@ -74,13 +139,51 @@ public:
         if(0 != tcgetattr(fd, &settings))
             error("can't get settings : " + devicePath);
         cfmakeraw(&settings);
-        cfsetispeed(&settings, BAUD_RATE_B);
-        cfsetospeed(&settings, BAUD_RATE_B);
+        speed_t baudRateConstant = getBaudRateConstant(baudRate);
+        if(baudRateConstant == B0)
+        {
+            char str[100];
+            snprintf(str, sizeof(str) / sizeof(str[0]), "invalid baud rate : %i", baudRate);
+            error(str);
+        }
+        cfsetispeed(&settings, baudRateConstant);
+        cfsetospeed(&settings, baudRateConstant);
+        settings.c_cflag &= ~(PARENB | CSTOPB | CSIZE | CRTSCTS);
+        settings.c_cflag |= CLOCAL | CREAD | CS8;
         if(0 != tcsetattr(fd, TCSANOW, &settings))
             error("can't get settings : " + devicePath);
+        tcflush(fd, TCIOFLUSH);
         f = fdopen(fd, "wb");
         if(!f)
             error("can't run fdopen");
+        vector<uint8_t> buffer;
+        // write a data chunk time it to derive actual baud rate
+        buffer.resize(1024, 0xAA);
+        int iterations = 1;
+        for(;;)
+        {
+            timespec startTime, endTime;
+            clock_gettime(CLOCK_MONOTONIC, &startTime);
+            size_t totalSize = 0;
+            for(int i = 0; i < iterations; i++)
+            {
+                fwrite((const void *)&buffer[0], sizeof(buffer[0]), buffer.size(), f);
+                totalSize += buffer.size();
+            }
+            tcdrain(fd);
+            clock_gettime(CLOCK_MONOTONIC, &endTime);
+            double fStartTime = startTime.tv_sec + startTime.tv_nsec * 1e-9;
+            double fEndTime = endTime.tv_sec + endTime.tv_nsec * 1e-9;
+            double elapsedTime = fEndTime - fStartTime;
+            double totalBits = (double)totalSize * (1/* start bit */ + 8/* data bits */ + 1/* stop bit */);
+            if(elapsedTime < 1)
+            {
+                iterations *= 2;
+                continue;
+            }
+            actualBaudRate = totalBits / elapsedTime;
+            break;
+        }
     }
     void write(uint8_t v)
     {
@@ -89,6 +192,10 @@ public:
     ~SerialOutput()
     {
         fclose(f);
+    }
+    float getActualBaudRate() const
+    {
+        return actualBaudRate;
     }
 };
 
@@ -182,21 +289,80 @@ public:
     }
 };
 #if 1
-int main()
+int main(int argc, char **argv)
 {
+    string signalSourceFile = "audio-data-16le-44100-mono.bin";
+    string outputDevice = "/dev/ttyUSB0";
+    int signalSourceSampleRate = 44100;
+    int signalSourceBytesPerSample = 2;
+    bool signalSourceIsSigned = true;
+    int outputBaudRate = 1000000;
+    int optchar;
+    opterr = 0;
+    while(-1 != (optchar = getopt(argc, argv, "hd:i:r:z:b:su")))
+    {
+        switch(optchar)
+        {
+        case 'h':
+            cout << "delta-sigma-test v0.1 by Jacob Lifshay (c) 2014\n"
+            "options:\n"
+            "-h\t\tshow this help.\n"
+            "-d <path>\tset serial device.\n"
+            "-i <file>\tset input file.\n"
+            "-b <rate>\tset output baud rate.\n"
+            "-r <rate>\tset input sample rate.\n"
+            "-z <size>\tset the sample size in bytes.\n"
+            "-s\t\tset input sample type to signed.\n"
+            "-u\t\tset input sample type to unsigned.\n";
+            cout << flush;
+            return 0;
+        case 'd':
+            outputDevice = optarg;
+            break;
+        case 'i':
+            signalSourceFile = optarg;
+            break;
+        case 'r':
+            if(1 != sscanf(optarg, " %i", &signalSourceSampleRate) || signalSourceSampleRate < 100 || signalSourceSampleRate > 1000000)
+                error((string)"invalid sample rate : " + optarg);
+            break;
+        case 'z':
+            if(1 != sscanf(optarg, " %i", &signalSourceBytesPerSample) || signalSourceBytesPerSample < 1 || signalSourceBytesPerSample > 4)
+                error((string)"invalid sample size : " + optarg);
+            break;
+        case 'b':
+            if(1 != sscanf(optarg, " %i", &outputBaudRate) || outputBaudRate < 50 || outputBaudRate > 1000000000)
+                error((string)"invalid baud rate : " + optarg);
+            break;
+        case 's':
+            signalSourceIsSigned = true;
+            break;
+        case 'u':
+            signalSourceIsSigned = false;
+            break;
+        case '?':
+            if(optopt == 'd' || optopt == 'i' || optopt == 'r' || optopt == 'z' || optopt == 'b')
+                error((string)"-" + (char)optopt + " missing argument");
+            error((string)"invalid option : -" + (char)optopt);
+            break;
+        default:
+            error((string)"invalid option : " + (char)optchar);
+            break;
+        }
+    }
+    if(optind < argc)
+        error((string)"unexpected argument : " + argv[optind]);
     SigmaDeltaModulator sdm;
-#if 1
-    SignalSourceFile signalSource("audio-data-16le-44100-mono.bin", 44100, 2, true);
-#else
-    SignalSourceSine signalSource(440, 1);
-#endif
-    SerialOutput serialOutput("/dev/ttyUSB0");
+    SignalSourceFile signalSource(signalSourceFile, signalSourceSampleRate, signalSourceBytesPerSample, signalSourceIsSigned);
+    SerialOutput serialOutput(outputDevice, outputBaudRate);
     int bitNumber = 0;
     uint8_t byteValue = 0;
     size_t currentBitCount = 0;
+    cout << "actual baud rate : " << fixed << serialOutput.getActualBaudRate() << endl;
+    float bitPeriod = 1.0f / serialOutput.getActualBaudRate();
     while(!signalSource.done)
     {
-        float signal = signalSource(1.0f / BAUD_RATE);
+        float signal = signalSource(bitPeriod);
         bool sdmOutput;
         const int startBitCount = 1, stopBitCount = 1, dataBitCount = 8;
         signal *= dataBitCount / (double)(startBitCount + stopBitCount + dataBitCount);
@@ -222,7 +388,7 @@ int main()
     return 0;
 }
 #else
-int main()
+int main(int argc, char **argv)
 {
     double frame = 0;
     while(true)
