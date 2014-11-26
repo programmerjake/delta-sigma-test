@@ -16,6 +16,12 @@
 #include <vector>
 #include <ctime>
 
+#define USE_VORBISFILE
+
+#ifdef USE_VORBISFILE
+#include <vorbis/vorbisfile.h>
+#endif
+
 using namespace std;
 
 void error(string msg)
@@ -63,67 +69,68 @@ class SerialOutput
         switch(baudRate)
         {
 #define BAUD_RATE(v) case v: return B ## v
-        BAUD_RATE(50);
-        BAUD_RATE(75);
-        BAUD_RATE(110);
-        BAUD_RATE(134);
-        BAUD_RATE(150);
-        BAUD_RATE(200);
-        BAUD_RATE(300);
-        BAUD_RATE(600);
-        BAUD_RATE(1200);
-        BAUD_RATE(1800);
-        BAUD_RATE(2400);
-        BAUD_RATE(4800);
-        BAUD_RATE(9600);
-        BAUD_RATE(19200);
-        BAUD_RATE(38400);
+            BAUD_RATE(50);
+            BAUD_RATE(75);
+            BAUD_RATE(110);
+            BAUD_RATE(134);
+            BAUD_RATE(150);
+            BAUD_RATE(200);
+            BAUD_RATE(300);
+            BAUD_RATE(600);
+            BAUD_RATE(1200);
+            BAUD_RATE(1800);
+            BAUD_RATE(2400);
+            BAUD_RATE(4800);
+            BAUD_RATE(9600);
+            BAUD_RATE(19200);
+            BAUD_RATE(38400);
 #ifdef B57600
-        BAUD_RATE(57600);
+            BAUD_RATE(57600);
 #endif
 #ifdef B115200
-        BAUD_RATE(115200);
+            BAUD_RATE(115200);
 #endif
 #ifdef B230400
-        BAUD_RATE(230400);
+            BAUD_RATE(230400);
 #endif
 #ifdef B460800
-        BAUD_RATE(460800);
+            BAUD_RATE(460800);
 #endif
 #ifdef B500000
-        BAUD_RATE(500000);
+            BAUD_RATE(500000);
 #endif
 #ifdef B576000
-        BAUD_RATE(576000);
+            BAUD_RATE(576000);
 #endif
 #ifdef B921600
-        BAUD_RATE(921600);
+            BAUD_RATE(921600);
 #endif
 #ifdef B1000000
-        BAUD_RATE(1000000);
+            BAUD_RATE(1000000);
 #endif
 #ifdef B1152000
-        BAUD_RATE(1152000);
+            BAUD_RATE(1152000);
 #endif
 #ifdef B1500000
-        BAUD_RATE(1500000);
+            BAUD_RATE(1500000);
 #endif
 #ifdef B2000000
-        BAUD_RATE(2000000);
+            BAUD_RATE(2000000);
 #endif
 #ifdef B2500000
-        BAUD_RATE(2500000);
+            BAUD_RATE(2500000);
 #endif
 #ifdef B3000000
-        BAUD_RATE(3000000);
+            BAUD_RATE(3000000);
 #endif
 #ifdef B3500000
-        BAUD_RATE(3500000);
+            BAUD_RATE(3500000);
 #endif
 #ifdef B4000000
-        BAUD_RATE(4000000);
+            BAUD_RATE(4000000);
 #endif
 #undef BAUD_RATE
+
         default:
             return B0;
         }
@@ -133,54 +140,77 @@ public:
     {
         signal(SIGIO, SIG_IGN);
         int fd = open(devicePath.c_str(), O_NOCTTY | O_WRONLY);
+
         if(fd == -1)
+        {
             error("can't open : " + devicePath);
+        }
+
         termios settings;
+
         if(0 != tcgetattr(fd, &settings))
+        {
             error("can't get settings : " + devicePath);
+        }
+
         cfmakeraw(&settings);
         speed_t baudRateConstant = getBaudRateConstant(baudRate);
+
         if(baudRateConstant == B0)
         {
             char str[100];
             snprintf(str, sizeof(str) / sizeof(str[0]), "invalid baud rate : %i", baudRate);
             error(str);
         }
+
         cfsetispeed(&settings, baudRateConstant);
         cfsetospeed(&settings, baudRateConstant);
         settings.c_cflag &= ~(PARENB | CSTOPB | CSIZE | CRTSCTS);
         settings.c_cflag |= CLOCAL | CREAD | CS8;
+
         if(0 != tcsetattr(fd, TCSANOW, &settings))
+        {
             error("can't get settings : " + devicePath);
+        }
+
         tcflush(fd, TCIOFLUSH);
         f = fdopen(fd, "wb");
+
         if(!f)
+        {
             error("can't run fdopen");
+        }
+
         vector<uint8_t> buffer;
         // write a data chunk time it to derive actual baud rate
         buffer.resize(1024, 0xAA);
         int iterations = 1;
+
         for(;;)
         {
             timespec startTime, endTime;
             clock_gettime(CLOCK_MONOTONIC, &startTime);
             size_t totalSize = 0;
+
             for(int i = 0; i < iterations; i++)
             {
                 fwrite((const void *)&buffer[0], sizeof(buffer[0]), buffer.size(), f);
                 totalSize += buffer.size();
             }
+
             tcdrain(fd);
             clock_gettime(CLOCK_MONOTONIC, &endTime);
             double fStartTime = startTime.tv_sec + startTime.tv_nsec * 1e-9;
             double fEndTime = endTime.tv_sec + endTime.tv_nsec * 1e-9;
             double elapsedTime = fEndTime - fStartTime;
             double totalBits = (double)totalSize * (1/* start bit */ + 8/* data bits */ + 1/* stop bit */);
+
             if(elapsedTime < 1)
             {
                 iterations *= 2;
                 continue;
             }
+
             actualBaudRate = totalBits / elapsedTime;
             break;
         }
@@ -199,6 +229,7 @@ public:
     }
 };
 
+#ifndef USE_VORBISFILE
 class SignalSourceFile
 {
     double sampleRate;
@@ -217,8 +248,12 @@ public:
         : sampleRate(sampleRate), bytesPerSample(bytesPerSample), done(false), fractSample(0), isSigned(isSigned)
     {
         f.open(fileName.c_str(), ios::binary | ios::in);
+
         if(!f)
+        {
             error("can't open file : " + fileName);
+        }
+
         lastSample = readSample();
         currentSample = readSample();
     }
@@ -228,49 +263,188 @@ public:
     float readSample()
     {
         if(done)
+        {
             return 0;
+        }
+
         int b = f.get();
+
         if(b == EOF)
         {
             done = true;
             return 0;
         }
+
         int32_t minValue = -0x80 << 8 * (bytesPerSample - 1);
         int32_t value = b;
         int32_t mask = -0x100 << 8 * (bytesPerSample - 1);
+
         for(int i = 1; i < bytesPerSample; i++)
         {
             b = f.get();
+
             if(b == EOF)
             {
                 done = true;
                 return 0;
             }
+
             value |= (int32_t)b << 8 * i;
         }
+
         if(!isSigned)
         {
             return (float)(int64_t)(uint32_t)value / -(float)minValue - 1;
         }
+
         if(value & minValue)
+        {
             value |= mask;
+        }
+
         return -(float)value / minValue;
     }
-    float operator ()(float deltaTime)
+    float operator()(float deltaTime)
     {
         fractSample += deltaTime * sampleRate;
         float floorFractSample = floor(fractSample);
         int readCount = (int)floorFractSample;
         fractSample -= floorFractSample;
+
         while(readCount-- > 0)
         {
             lastSample = currentSample;
             currentSample = readSample();
         }
+
         return lastSample + fractSample * (currentSample - lastSample);
     }
 };
+#else
+class SignalSourceVorbisFile
+{
+    OggVorbis_File ovf;
+    FILE *f;
+    unsigned channels;
+    unsigned sampleRate;
+    vector<float> buffer;
+    size_t currentBufferPos;
+    float fractSample;
+    float lastSample, currentSample;
+    static size_t read_fn(void *dataPtr_in, size_t blockSize, size_t numBlocks, void *dataSource)
+    {
+        SignalSourceVorbisFile &decoder = *(SignalSourceVorbisFile *)dataSource;
+        return fread(dataPtr_in, blockSize, numBlocks, decoder.f);
+    }
+    inline void readBuffer()
+    {
+        buffer.resize(buffer.capacity());
+        int currentSection;
+        currentBufferPos = 0;
+        float **pcmChannels = NULL;
+        long sampleCountLong = ov_read_float(&ovf, &pcmChannels, buffer.size() / channels, &currentSection);
 
+        if(sampleCountLong < 0)
+        {
+            sampleCountLong = 0;
+        }
+
+        size_t sampleCount = sampleCountLong;
+        buffer.resize(sampleCount * channels);
+
+        for(size_t sample = 0, bufferIndex = 0; sample < sampleCount; sample++)
+        {
+            for(unsigned channel = 0; channel < channels; channel++)
+            {
+                buffer[bufferIndex++] = pcmChannels[channel][sample];
+            }
+        }
+    }
+    float readSample()
+    {
+        if(currentBufferPos >= buffer.size())
+        {
+            readBuffer();
+
+            if(buffer.size() == 0)
+            {
+                done = true;
+                return 0;
+            }
+        }
+
+        float retval = 0;
+        for(unsigned j = 0; j < channels; j++)
+        {
+            retval += buffer[currentBufferPos++];
+        }
+        retval /= channels;
+        return retval;
+    }
+public:
+    bool done;
+    SignalSourceVorbisFile(string fileName)
+        : currentBufferPos(0), fractSample(0), done(false)
+    {
+        f = fopen(fileName.c_str(), "rb");
+
+        if(!f)
+        {
+            error("can't open file : " + fileName);
+        }
+
+        ov_callbacks callbacks;
+        callbacks.read_func = &read_fn;
+        callbacks.seek_func = NULL;
+        callbacks.close_func = NULL;
+        callbacks.tell_func = NULL;
+        int openRetval = ov_open_callbacks((void *)this, &ovf, NULL, 0, callbacks);
+
+        switch(openRetval)
+        {
+        case 0:
+            break;
+
+        default:
+            error("invalid ogg vorbis audio");
+        }
+
+        vorbis_info *info = ov_info(&ovf, -1);
+        channels = info->channels;
+        buffer.reserve(channels * 8192);
+        sampleRate = info->rate;
+
+        if(channels == 0 || sampleRate == 0)
+        {
+            ov_clear(&ovf);
+            error("invalid ogg vorbis audio");
+        }
+
+        lastSample = readSample();
+        currentSample = readSample();
+    }
+    ~SignalSourceVorbisFile()
+    {
+        ov_clear(&ovf);
+        fclose(f);
+    }
+    float operator()(float deltaTime)
+    {
+        fractSample += deltaTime * sampleRate;
+        float floorFractSample = floor(fractSample);
+        int readCount = (int)floorFractSample;
+        fractSample -= floorFractSample;
+
+        while(readCount-- > 0)
+        {
+            lastSample = currentSample;
+            currentSample = readSample();
+        }
+
+        return lastSample + fractSample * (currentSample - lastSample);
+    }
+};
+#endif
 class SignalSourceSine
 {
     float angle;
@@ -281,7 +455,7 @@ public:
         : angle(0), frequency(frequency), amplitude(amplitude), done(false)
     {
     }
-    float operator ()(float deltaTime)
+    float operator()(float deltaTime)
     {
         angle += 2 * M_PI * frequency * deltaTime;
         angle = fmod(angle, 2 * M_PI);
@@ -291,75 +465,122 @@ public:
 #if 1
 int main(int argc, char **argv)
 {
+#ifdef USE_VORBISFILE
+    string signalSourceFile = "test.ogg";
+#else
     string signalSourceFile = "audio-data-16le-44100-mono.bin";
+#endif
     string outputDevice = "/dev/ttyUSB0";
+#ifndef USE_VORBISFILE
     int signalSourceSampleRate = 44100;
     int signalSourceBytesPerSample = 2;
     bool signalSourceIsSigned = true;
+#endif
     int outputBaudRate = 1000000;
     int optchar;
     opterr = 0;
+
     while(-1 != (optchar = getopt(argc, argv, "hd:i:r:z:b:su")))
     {
         switch(optchar)
         {
         case 'h':
             cout << "delta-sigma-test v0.1 by Jacob Lifshay (c) 2014\n"
-            "options:\n"
-            "-h\t\tshow this help.\n"
-            "-d <path>\tset serial device.\n"
-            "-i <file>\tset input file.\n"
-            "-b <rate>\tset output baud rate.\n"
-            "-r <rate>\tset input sample rate.\n"
-            "-z <size>\tset the sample size in bytes.\n"
-            "-s\t\tset input sample type to signed.\n"
-            "-u\t\tset input sample type to unsigned.\n";
+                 "options:\n"
+                 "general:\n"
+                 "-h\t\tshow this help.\n"
+                 "output:\n"
+                 "-d <path>\tset serial device.\n"
+                 "-b <rate>\tset output baud rate.\n"
+                 "input:\n"
+                 "-i <file>\tset input file.\n"
+#ifndef USE_VORBISFILE
+                 "-r <rate>\tset input sample rate.\n"
+                 "-z <size>\tset the sample size in bytes.\n"
+                 "-s\t\tset input sample type to signed.\n"
+                 "-u\t\tset input sample type to unsigned.\n"
+#endif
+                 ;
             cout << flush;
             return 0;
+
         case 'd':
             outputDevice = optarg;
             break;
+
         case 'i':
             signalSourceFile = optarg;
             break;
+#ifndef USE_VORBISFILE
         case 'r':
             if(1 != sscanf(optarg, " %i", &signalSourceSampleRate) || signalSourceSampleRate < 100 || signalSourceSampleRate > 1000000)
+            {
                 error((string)"invalid sample rate : " + optarg);
+            }
+
             break;
+
         case 'z':
             if(1 != sscanf(optarg, " %i", &signalSourceBytesPerSample) || signalSourceBytesPerSample < 1 || signalSourceBytesPerSample > 4)
+            {
                 error((string)"invalid sample size : " + optarg);
+            }
+
             break;
+#endif
         case 'b':
             if(1 != sscanf(optarg, " %i", &outputBaudRate) || outputBaudRate < 50 || outputBaudRate > 1000000000)
+            {
                 error((string)"invalid baud rate : " + optarg);
+            }
+
             break;
+#ifndef USE_VORBISFILE
         case 's':
             signalSourceIsSigned = true;
             break;
+
         case 'u':
             signalSourceIsSigned = false;
             break;
+#endif
         case '?':
-            if(optopt == 'd' || optopt == 'i' || optopt == 'r' || optopt == 'z' || optopt == 'b')
+            if(optopt == 'd' || optopt == 'i' ||
+#ifndef USE_VORBISFILE
+               optopt == 'r' || optopt == 'z' ||
+#endif
+               optopt == 'b')
+            {
                 error((string)"-" + (char)optopt + " missing argument");
+            }
+
             error((string)"invalid option : -" + (char)optopt);
             break;
+
         default:
             error((string)"invalid option : " + (char)optchar);
             break;
         }
     }
+
     if(optind < argc)
+    {
         error((string)"unexpected argument : " + argv[optind]);
+    }
+
     SigmaDeltaModulator sdm;
-    SignalSourceFile signalSource(signalSourceFile, signalSourceSampleRate, signalSourceBytesPerSample, signalSourceIsSigned);
     SerialOutput serialOutput(outputDevice, outputBaudRate);
+#ifdef USE_VORBISFILE
+    SignalSourceVorbisFile signalSource(signalSourceFile);
+#else
+    SignalSourceFile signalSource(signalSourceFile, signalSourceSampleRate, signalSourceBytesPerSample, signalSourceIsSigned);
+#endif
     int bitNumber = 0;
     uint8_t byteValue = 0;
     size_t currentBitCount = 0;
     cout << "actual baud rate : " << fixed << serialOutput.getActualBaudRate() << endl;
     float bitPeriod = 1.0f / serialOutput.getActualBaudRate();
+
     while(!signalSource.done)
     {
         float signal = signalSource(bitPeriod);
@@ -368,14 +589,21 @@ int main(int argc, char **argv)
         signal *= dataBitCount / (double)(startBitCount + stopBitCount + dataBitCount);
         bitNumber++;
         bitNumber %= startBitCount + stopBitCount + dataBitCount;
+
         if(bitNumber < startBitCount)
+        {
             sdmOutput = sdm.forcedStep(signal, false);
+        }
         else if(bitNumber < startBitCount + dataBitCount)
         {
             sdmOutput = sdm.step(signal);
             byteValue >>= 1;
+
             if(sdmOutput)
+            {
                 byteValue |= 0x80;
+            }
+
             if(++currentBitCount >= dataBitCount)
             {
                 currentBitCount = 0;
@@ -383,14 +611,18 @@ int main(int argc, char **argv)
             }
         }
         else
+        {
             sdmOutput = sdm.forcedStep(signal, true);
+        }
     }
+
     return 0;
 }
 #else
 int main(int argc, char **argv)
 {
     double frame = 0;
+
     while(true)
     {
         frame += 1.0f;
@@ -400,26 +632,43 @@ int main(int argc, char **argv)
         cout << "\x1b[H" << signal << "\x1b[K\n";
         SigmaDeltaModulator sdm;
         sdm.step(1);
+
         for(int i = 0; i < 5; i++)
+        {
             sdm.step(signal);
+        }
+
         for(int y = 0; y < 20; y++)
         {
             for(int x = 0; x < 70; x++)
             {
                 bool v;
+
                 if(x % 10 < 2)
+                {
                     v = sdm.forcedStep(signal, x % 10 == 0);
+                }
                 else
+                {
                     v = sdm.step(signal);
+                }
+
                 if(v)
+                {
                     cout << "#";
+                }
                 else
+                {
                     cout << " ";
+                }
             }
+
             cout << "\x1b[K\n";
         }
+
         cout << flush;
     }
+
     return 0;
 }
 #endif
