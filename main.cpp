@@ -15,6 +15,8 @@
 #include <fstream>
 #include <vector>
 #include <ctime>
+#include <linux/serial.h>
+#include <sys/ioctl.h>
 
 #define USE_VORBISFILE
 
@@ -34,7 +36,28 @@ inline float limit(float v, float minimum, float maximum)
 {
     return v > maximum ? maximum : v < minimum ? minimum : v;
 }
-
+#if 1
+class SigmaDeltaModulator
+{
+    float sum;
+public:
+    SigmaDeltaModulator()
+        : sum(0)
+    {
+    }
+    bool forcedStep(float input, bool retval)
+    {
+        input = limit(input, -1, 1);
+        float feedback = retval ? 1 : -1;
+        sum += input - feedback;
+        return retval;
+    }
+    bool step(float input)
+    {
+        return forcedStep(input, sum > 0);
+    }
+};
+#else
 class SigmaDeltaModulator
 {
     float sum1, sum2;
@@ -57,6 +80,7 @@ public:
         return forcedStep(input, sum2 > 0);
     }
 };
+#endif
 
 class SerialOutput
 {
@@ -138,8 +162,10 @@ class SerialOutput
 public:
     SerialOutput(string devicePath, int baudRate)
     {
+        if(baudRate < 10)
+            error("invalid baud rate");
         signal(SIGIO, SIG_IGN);
-        int fd = open(devicePath.c_str(), O_NOCTTY | O_WRONLY);
+        int fd = open(devicePath.c_str(), O_NOCTTY | O_RDWR);
 
         if(fd == -1)
         {
@@ -156,11 +182,19 @@ public:
         cfmakeraw(&settings);
         speed_t baudRateConstant = getBaudRateConstant(baudRate);
 
-        if(baudRateConstant == B0)
+        if(baudRateConstant == B0) // set custom divisor
         {
-            char str[100];
-            snprintf(str, sizeof(str) / sizeof(str[0]), "invalid baud rate : %i", baudRate);
-            error(str);
+            serial_struct serial;
+            serial.reserved_char[0] = 0;
+            if(ioctl(fd, TIOCGSERIAL, &serial) < 0)
+                error("can't get settings : " + devicePath);
+            serial.flags &= ~ASYNC_SPD_MASK;
+            serial.flags |= ASYNC_SPD_CUST;
+            serial.custom_divisor = (serial.baud_base + baudRate / 2) / baudRate;
+            if(serial.custom_divisor < 1) 
+                serial.custom_divisor = 1;
+            if(ioctl(fd, TIOCSSERIAL, &serial) < 0)
+                error("can't set settings : " + devicePath);
         }
 
         cfsetispeed(&settings, baudRateConstant);
@@ -170,7 +204,7 @@ public:
 
         if(0 != tcsetattr(fd, TCSANOW, &settings))
         {
-            error("can't get settings : " + devicePath);
+            error("can't set settings : " + devicePath);
         }
 
         tcflush(fd, TCIOFLUSH);
@@ -479,8 +513,9 @@ int main(int argc, char **argv)
     int outputBaudRate = 1000000;
     int optchar;
     opterr = 0;
+    float amplitude = 1.0f;
 
-    while(-1 != (optchar = getopt(argc, argv, "hd:i:r:z:b:su")))
+    while(-1 != (optchar = getopt(argc, argv, "hd:i:r:z:b:sua:")))
     {
         switch(optchar)
         {
@@ -490,6 +525,7 @@ int main(int argc, char **argv)
                  "general:\n"
                  "-h\t\tshow this help.\n"
                  "output:\n"
+                 "-a <number>\tset output amplitude.\n"
                  "-d <path>\tset serial device.\n"
                  "-b <rate>\tset output baud rate.\n"
                  "input:\n"
@@ -503,6 +539,14 @@ int main(int argc, char **argv)
                  ;
             cout << flush;
             return 0;
+
+        case 'a':
+            if(1 != sscanf(optarg, " %f", &amplitude) || !isfinite(amplitude) || amplitude <= 0 || amplitude > 1000)
+            {
+                error((string)"invalid amplitude : " + optarg);
+            }
+
+            break;
 
         case 'd':
             outputDevice = optarg;
@@ -549,7 +593,7 @@ int main(int argc, char **argv)
 #ifndef USE_VORBISFILE
                optopt == 'r' || optopt == 'z' ||
 #endif
-               optopt == 'b')
+               optopt == 'b' || optopt == 'a')
             {
                 error((string)"-" + (char)optopt + " missing argument");
             }
@@ -583,7 +627,7 @@ int main(int argc, char **argv)
 
     while(!signalSource.done)
     {
-        float signal = signalSource(bitPeriod);
+        float signal = signalSource(bitPeriod) * amplitude;
         bool sdmOutput;
         const int startBitCount = 1, stopBitCount = 1, dataBitCount = 8;
         signal *= dataBitCount / (double)(startBitCount + stopBitCount + dataBitCount);
