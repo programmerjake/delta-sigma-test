@@ -32,7 +32,11 @@
 			<Add option="-Wall" />
 			<Add option="-std=c++11" />
 			<Add option="-fexceptions" />
+			<Add option="`pkg-config vorbisfile --cflags`" />
 		</Compiler>
+		<Linker>
+			<Add option="`pkg-config vorbisfile --libs`" />
+		</Linker>
 		<Unit filename="main.cpp" />
 		<Extensions>
 			<code_completion />

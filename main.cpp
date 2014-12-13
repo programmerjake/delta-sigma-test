@@ -191,7 +191,7 @@ public:
             serial.flags &= ~ASYNC_SPD_MASK;
             serial.flags |= ASYNC_SPD_CUST;
             serial.custom_divisor = (serial.baud_base + baudRate / 2) / baudRate;
-            if(serial.custom_divisor < 1) 
+            if(serial.custom_divisor < 1)
                 serial.custom_divisor = 1;
             if(ioctl(fd, TIOCSSERIAL, &serial) < 0)
                 error("can't set settings : " + devicePath);
@@ -263,38 +263,32 @@ public:
     }
 };
 
-#ifndef USE_VORBISFILE
-class SignalSourceFile
+class SignalSource
+{
+    SignalSource(const SignalSource &); // not implemented
+    void operator =(const SignalSource &); // not implemented
+public:
+    bool done;
+    SignalSource()
+        : done(false)
+    {
+    }
+    virtual ~SignalSource()
+    {
+    }
+    virtual float operator ()(float deltaTime) = 0;
+};
+
+class SignalSourceFile : public SignalSource
 {
     double sampleRate;
     int bytesPerSample;
     ifstream f;
     float lastSample, currentSample;
-public:
-    bool done;
-private:
     float fractSample;
-    bool isSigned;
-    SignalSourceFile(const SignalSourceFile &); // not implemented
-    void operator =(const SignalSourceFile &); // not implemented
-public:
-    SignalSourceFile(string fileName, double sampleRate, int bytesPerSample, bool isSigned)
-        : sampleRate(sampleRate), bytesPerSample(bytesPerSample), done(false), fractSample(0), isSigned(isSigned)
-    {
-        f.open(fileName.c_str(), ios::binary | ios::in);
-
-        if(!f)
-        {
-            error("can't open file : " + fileName);
-        }
-
-        lastSample = readSample();
-        currentSample = readSample();
-    }
-    ~SignalSourceFile()
-    {
-    }
-    float readSample()
+    bool isSigned, isLittleEndian;
+    int channelCount;
+    float readSampleInternal()
     {
         if(done)
         {
@@ -311,6 +305,8 @@ public:
 
         int32_t minValue = -0x80 << 8 * (bytesPerSample - 1);
         int32_t value = b;
+        if(!isLittleEndian)
+            value <<= 8 * (bytesPerSample - 1);
         int32_t mask = -0x100 << 8 * (bytesPerSample - 1);
 
         for(int i = 1; i < bytesPerSample; i++)
@@ -323,7 +319,10 @@ public:
                 return 0;
             }
 
-            value |= (int32_t)b << 8 * i;
+            if(isLittleEndian)
+                value |= (int32_t)b << 8 * i;
+            else
+                value |= (int32_t)b << 8 * (bytesPerSample - i - 1);
         }
 
         if(!isSigned)
@@ -337,6 +336,30 @@ public:
         }
 
         return -(float)value / minValue;
+    }
+    float readSample()
+    {
+        float retval = 0;
+        for(int i = 0; i < channelCount; i++)
+            retval += readSampleInternal();
+        return retval / channelCount;
+    }
+public:
+    SignalSourceFile(string fileName, double sampleRate, int bytesPerSample, bool isSigned, bool isLittleEndian, int channelCount)
+        : sampleRate(sampleRate), bytesPerSample(bytesPerSample), fractSample(0), isSigned(isSigned), isLittleEndian(isLittleEndian), channelCount(channelCount)
+    {
+        f.open(fileName.c_str(), ios::binary | ios::in);
+
+        if(!f)
+        {
+            error("can't open file : " + fileName);
+        }
+
+        lastSample = readSample();
+        currentSample = readSample();
+    }
+    ~SignalSourceFile()
+    {
     }
     float operator()(float deltaTime)
     {
@@ -354,8 +377,8 @@ public:
         return lastSample + fractSample * (currentSample - lastSample);
     }
 };
-#else
-class SignalSourceVorbisFile
+#ifdef USE_VORBISFILE
+class SignalSourceVorbisFile : public SignalSource
 {
     OggVorbis_File ovf;
     FILE *f;
@@ -416,9 +439,8 @@ class SignalSourceVorbisFile
         return retval;
     }
 public:
-    bool done;
     SignalSourceVorbisFile(string fileName)
-        : currentBufferPos(0), fractSample(0), done(false)
+        : currentBufferPos(0), fractSample(0)
     {
         f = fopen(fileName.c_str(), "rb");
 
@@ -501,21 +523,22 @@ int main(int argc, char **argv)
 {
 #ifdef USE_VORBISFILE
     string signalSourceFile = "test.ogg";
+    bool isOgg = true;
 #else
     string signalSourceFile = "audio-data-16le-44100-mono.bin";
 #endif
     string outputDevice = "/dev/ttyUSB0";
-#ifndef USE_VORBISFILE
     int signalSourceSampleRate = 44100;
     int signalSourceBytesPerSample = 2;
     bool signalSourceIsSigned = true;
-#endif
+    bool signalSourceIsLittleEndian = true;
+    int signalSourceChannelCount = 1;
     int outputBaudRate = 1000000;
     int optchar;
     opterr = 0;
     float amplitude = 1.0f;
 
-    while(-1 != (optchar = getopt(argc, argv, "hd:i:r:z:b:sua:")))
+    while(-1 != (optchar = getopt(argc, argv, "hd:i:r:z:b:sua:lB")))
     {
         switch(optchar)
         {
@@ -530,12 +553,14 @@ int main(int argc, char **argv)
                  "-b <rate>\tset output baud rate.\n"
                  "input:\n"
                  "-i <file>\tset input file.\n"
-#ifndef USE_VORBISFILE
+                 "raw input:\n"
                  "-r <rate>\tset input sample rate.\n"
                  "-z <size>\tset the sample size in bytes.\n"
+                 "-c <count>\tset the channel count.\n"
                  "-s\t\tset input sample type to signed.\n"
                  "-u\t\tset input sample type to unsigned.\n"
-#endif
+                 "-l\t\tset input sample type to little endian.\n"
+                 "-B\t\tset input sample type to big endian.\n"
                  ;
             cout << flush;
             return 0;
@@ -555,8 +580,10 @@ int main(int argc, char **argv)
         case 'i':
             signalSourceFile = optarg;
             break;
-#ifndef USE_VORBISFILE
         case 'r':
+#ifdef USE_VORBISFILE
+            isOgg = false;
+#endif
             if(1 != sscanf(optarg, " %i", &signalSourceSampleRate) || signalSourceSampleRate < 100 || signalSourceSampleRate > 1000000)
             {
                 error((string)"invalid sample rate : " + optarg);
@@ -565,13 +592,25 @@ int main(int argc, char **argv)
             break;
 
         case 'z':
+#ifdef USE_VORBISFILE
+            isOgg = false;
+#endif
             if(1 != sscanf(optarg, " %i", &signalSourceBytesPerSample) || signalSourceBytesPerSample < 1 || signalSourceBytesPerSample > 4)
             {
                 error((string)"invalid sample size : " + optarg);
             }
 
             break;
+        case 'c':
+#ifdef USE_VORBISFILE
+            isOgg = false;
 #endif
+            if(1 != sscanf(optarg, " %i", &signalSourceChannelCount) || signalSourceChannelCount < 1 || signalSourceChannelCount > 100)
+            {
+                error((string)"invalid channel count : " + optarg);
+            }
+
+            break;
         case 'b':
             if(1 != sscanf(optarg, " %i", &outputBaudRate) || outputBaudRate < 50 || outputBaudRate > 1000000000)
             {
@@ -579,21 +618,37 @@ int main(int argc, char **argv)
             }
 
             break;
-#ifndef USE_VORBISFILE
         case 's':
+#ifdef USE_VORBISFILE
+            isOgg = false;
+#endif
             signalSourceIsSigned = true;
             break;
 
         case 'u':
+#ifdef USE_VORBISFILE
+            isOgg = false;
+#endif
             signalSourceIsSigned = false;
             break;
+        case 'l':
+#ifdef USE_VORBISFILE
+            isOgg = false;
 #endif
+            signalSourceIsLittleEndian = true;
+            break;
+
+        case 'B':
+#ifdef USE_VORBISFILE
+            isOgg = false;
+#endif
+            signalSourceIsLittleEndian = false;
+            break;
         case '?':
             if(optopt == 'd' || optopt == 'i' ||
-#ifndef USE_VORBISFILE
                optopt == 'r' || optopt == 'z' ||
-#endif
-               optopt == 'b' || optopt == 'a')
+               optopt == 'b' || optopt == 'a' ||
+               optopt == 'c')
             {
                 error((string)"-" + (char)optopt + " missing argument");
             }
@@ -614,20 +669,42 @@ int main(int argc, char **argv)
 
     SigmaDeltaModulator sdm;
     SerialOutput serialOutput(outputDevice, outputBaudRate);
+    SignalSource *pSignalSource = NULL;
 #ifdef USE_VORBISFILE
-    SignalSourceVorbisFile signalSource(signalSourceFile);
-#else
-    SignalSourceFile signalSource(signalSourceFile, signalSourceSampleRate, signalSourceBytesPerSample, signalSourceIsSigned);
+    if(isOgg)
+        pSignalSource = new SignalSourceVorbisFile(signalSourceFile);
 #endif
+    if(!pSignalSource)
+        pSignalSource = new SignalSourceFile(signalSourceFile, signalSourceSampleRate, signalSourceBytesPerSample, signalSourceIsSigned, signalSourceIsLittleEndian, signalSourceChannelCount);
+    SignalSource &signalSource = *pSignalSource;
     int bitNumber = 0;
     uint8_t byteValue = 0;
     size_t currentBitCount = 0;
     cout << "actual baud rate : " << fixed << serialOutput.getActualBaudRate() << endl;
     float bitPeriod = 1.0f / serialOutput.getActualBaudRate();
+    double elapsedTime = 0, lastMessageTime = -1e8;
 
     while(!signalSource.done)
     {
+        if(elapsedTime - lastMessageTime >= 0.1)
+        {
+            lastMessageTime = elapsedTime;
+            double seconds = elapsedTime;
+            double minutes = std::floor(seconds / 60);
+            double hours = std::floor(minutes / 60);
+            double days = std::floor(hours / 24);
+            seconds -= minutes * 60;
+            minutes -= hours * 60;
+            hours -= days * 24;
+            long long idays = (long long)days;
+            int ihours = (int)std::floor(hours + 0.5);
+            int iminutes = (int)std::floor(minutes + 0.5);
+            char str[256];
+            snprintf(str, sizeof(str), "%llid %i:%02i:%02.3f", idays, ihours, iminutes, seconds);
+            cout << "\r" << str << "\x1b[K\r" << flush;
+        }
         float signal = signalSource(bitPeriod) * amplitude;
+        elapsedTime += bitPeriod;
         bool sdmOutput;
         const int startBitCount = 1, stopBitCount = 1, dataBitCount = 8;
         signal *= dataBitCount / (double)(startBitCount + stopBitCount + dataBitCount);
@@ -659,6 +736,7 @@ int main(int argc, char **argv)
             sdmOutput = sdm.forcedStep(signal, true);
         }
     }
+    delete pSignalSource;
 
     return 0;
 }
