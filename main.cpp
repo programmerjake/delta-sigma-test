@@ -6,9 +6,9 @@
 #include <cmath>
 #include <termios.h>
 #include <cstdio>
-#include <unistd.h>
-#include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <cerrno>
@@ -85,6 +85,7 @@ public:
 class SerialOutput
 {
     FILE *f;
+    bool isDevice;
     float actualBaudRate;
     SerialOutput(const SerialOutput &); // not implemented
     void operator =(const SerialOutput &); // not implemented
@@ -165,88 +166,127 @@ public:
         if(baudRate < 10)
             error("invalid baud rate");
         signal(SIGIO, SIG_IGN);
-        int fd = open(devicePath.c_str(), O_NOCTTY | O_RDWR);
+        int fd = 1;
+        if(devicePath != "-")
+            fd = open(devicePath.c_str(), O_NOCTTY | O_WRONLY);
 
         if(fd == -1)
         {
             error("can't open : " + devicePath);
         }
 
-        termios settings;
+        struct stat statBlock;
 
-        if(0 != tcgetattr(fd, &settings))
+        if(0 != fstat(fd, &statBlock))
         {
-            error("can't get settings : " + devicePath);
+            error("can't get file type : " + devicePath);
         }
 
-        cfmakeraw(&settings);
-        speed_t baudRateConstant = getBaudRateConstant(baudRate);
-
-        if(baudRateConstant == B0) // set custom divisor
+        if(isatty(fd))
         {
-            serial_struct serial;
-            serial.reserved_char[0] = 0;
-            if(ioctl(fd, TIOCGSERIAL, &serial) < 0)
+            if(devicePath == "-")
+            {
+                error("binary data not written to stdout : it's a terminal");
+            }
+            isDevice = true;
+        }
+        else if(S_ISREG(statBlock.st_mode) || S_ISFIFO(statBlock.st_mode) || S_ISSOCK(statBlock.st_mode))
+        {
+            isDevice = false;
+        }
+        else
+        {
+            error("invalid file type (not file, serial port, fifo, or socket) : " + devicePath);
+        }
+
+        if(isDevice)
+        {
+            termios settings;
+
+            if(0 != tcgetattr(fd, &settings))
+            {
                 error("can't get settings : " + devicePath);
-            serial.flags &= ~ASYNC_SPD_MASK;
-            serial.flags |= ASYNC_SPD_CUST;
-            serial.custom_divisor = (serial.baud_base + baudRate / 2) / baudRate;
-            if(serial.custom_divisor < 1)
-                serial.custom_divisor = 1;
-            if(ioctl(fd, TIOCSSERIAL, &serial) < 0)
+            }
+
+            cfmakeraw(&settings);
+            speed_t baudRateConstant = getBaudRateConstant(baudRate);
+
+            if(baudRateConstant == B0) // set custom divisor
+            {
+                serial_struct serial;
+                serial.reserved_char[0] = 0;
+                if(ioctl(fd, TIOCGSERIAL, &serial) < 0)
+                    error("can't get settings : " + devicePath);
+                serial.flags &= ~ASYNC_SPD_MASK;
+                serial.flags |= ASYNC_SPD_CUST;
+                serial.custom_divisor = (serial.baud_base + baudRate / 2) / baudRate;
+                if(serial.custom_divisor < 1)
+                    serial.custom_divisor = 1;
+                if(ioctl(fd, TIOCSSERIAL, &serial) < 0)
+                    error("can't set settings : " + devicePath);
+            }
+
+            cfsetispeed(&settings, baudRateConstant);
+            cfsetospeed(&settings, baudRateConstant);
+            settings.c_cflag &= ~(PARENB | CSTOPB | CSIZE | CRTSCTS);
+            settings.c_cflag |= CLOCAL | CREAD | CS8;
+
+            if(0 != tcsetattr(fd, TCSANOW, &settings))
+            {
                 error("can't set settings : " + devicePath);
+            }
+
+            tcflush(fd, TCIOFLUSH);
         }
-
-        cfsetispeed(&settings, baudRateConstant);
-        cfsetospeed(&settings, baudRateConstant);
-        settings.c_cflag &= ~(PARENB | CSTOPB | CSIZE | CRTSCTS);
-        settings.c_cflag |= CLOCAL | CREAD | CS8;
-
-        if(0 != tcsetattr(fd, TCSANOW, &settings))
-        {
-            error("can't set settings : " + devicePath);
-        }
-
-        tcflush(fd, TCIOFLUSH);
-        f = fdopen(fd, "wb");
+        if(fd == 1)
+            f = stdout;
+        else
+            f = fdopen(fd, "wb");
 
         if(!f)
         {
             error("can't run fdopen");
         }
 
-        vector<uint8_t> buffer;
-        // write a data chunk time it to derive actual baud rate
-        buffer.resize(1024, 0xAA);
-        int iterations = 1;
-
-        for(;;)
+        if(isDevice)
         {
-            timespec startTime, endTime;
-            clock_gettime(CLOCK_MONOTONIC, &startTime);
-            size_t totalSize = 0;
+            vector<uint8_t> buffer;
+            // write a data chunk time it to derive actual baud rate
+            buffer.resize(1024, 0xAA);
+            int iterations = 1;
 
-            for(int i = 0; i < iterations; i++)
+            for(;;)
             {
-                fwrite((const void *)&buffer[0], sizeof(buffer[0]), buffer.size(), f);
-                totalSize += buffer.size();
+                timespec startTime, endTime;
+                clock_gettime(CLOCK_MONOTONIC, &startTime);
+                size_t totalSize = 0;
+
+                for(int i = 0; i < iterations; i++)
+                {
+                    fwrite((const void *)&buffer[0], sizeof(buffer[0]), buffer.size(), f);
+                    totalSize += buffer.size();
+                }
+
+                tcdrain(fd);
+                clock_gettime(CLOCK_MONOTONIC, &endTime);
+                double fStartTime = startTime.tv_sec + startTime.tv_nsec * 1e-9;
+                double fEndTime = endTime.tv_sec + endTime.tv_nsec * 1e-9;
+                double elapsedTime = fEndTime - fStartTime;
+                double totalBits = (double)totalSize * (1/* start bit */ + 8/* data bits */ + 1/* stop bit */);
+
+                if(elapsedTime < 1)
+                {
+                    iterations *= 2;
+                    continue;
+                }
+
+                actualBaudRate = totalBits / elapsedTime;
+                break;
             }
-
-            tcdrain(fd);
-            clock_gettime(CLOCK_MONOTONIC, &endTime);
-            double fStartTime = startTime.tv_sec + startTime.tv_nsec * 1e-9;
-            double fEndTime = endTime.tv_sec + endTime.tv_nsec * 1e-9;
-            double elapsedTime = fEndTime - fStartTime;
-            double totalBits = (double)totalSize * (1/* start bit */ + 8/* data bits */ + 1/* stop bit */);
-
-            if(elapsedTime < 1)
-            {
-                iterations *= 2;
-                continue;
-            }
-
-            actualBaudRate = totalBits / elapsedTime;
-            break;
+        }
+        else
+        {
+            actualBaudRate = baudRate;
         }
     }
     void write(uint8_t v)
@@ -255,11 +295,18 @@ public:
     }
     ~SerialOutput()
     {
-        fclose(f);
+        if(f == stdout)
+            fflush(f);
+        else
+            fclose(f);
     }
     float getActualBaudRate() const
     {
         return actualBaudRate;
+    }
+    bool openOnStdOut() const
+    {
+        return f == stdout;
     }
 };
 
@@ -680,7 +727,8 @@ int main(int argc, char **argv)
     int bitNumber = 0;
     uint8_t byteValue = 0;
     size_t currentBitCount = 0;
-    cout << "actual baud rate : " << fixed << serialOutput.getActualBaudRate() << endl;
+    if(!serialOutput.openOnStdOut())
+        cout << "actual baud rate : " << fixed << serialOutput.getActualBaudRate() << endl;
     float bitPeriod = 1.0f / serialOutput.getActualBaudRate();
     double elapsedTime = 0, lastMessageTime = -1e8;
 
@@ -701,7 +749,8 @@ int main(int argc, char **argv)
             int iminutes = (int)std::floor(minutes + 0.5);
             char str[256];
             snprintf(str, sizeof(str), "%llid %i:%02i:%02.3f", idays, ihours, iminutes, seconds);
-            cout << "\r" << str << "\x1b[K\r" << flush;
+            if(!serialOutput.openOnStdOut())
+                cout << "\r" << str << "\x1b[K\r" << flush;
         }
         float signal = signalSource(bitPeriod) * amplitude;
         elapsedTime += bitPeriod;
